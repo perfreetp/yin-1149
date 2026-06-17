@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, MessageSquare, Stethoscope, Clock, User, CheckCircle, XCircle, AlertCircle, PhoneCall, Send, Plus, Save, Calendar, FileText } from 'lucide-react';
+import { Phone, MessageSquare, Stethoscope, Clock, User, CheckCircle, XCircle, AlertCircle, PhoneCall, Send, Plus, Save, Calendar, FileText, CheckSquare, Square, CalendarClock, Users } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -8,10 +8,12 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { Textarea } from '@/components/ui/Textarea';
 import { Select } from '@/components/ui/Select';
+import { Input } from '@/components/ui/Input';
 import { useAppStore } from '@/store/useAppStore';
-import { TASK_STATUS, TASK_PRIORITY, TASK_TYPE } from '@/types';
-import type { FollowupTask, ContactRecord } from '@/types';
-import { formatDate, formatDateTime, getRelativeDate, getToday } from '@/utils/date';
+import { TASK_STATUS, TASK_PRIORITY, TASK_TYPE, RISK_LEVELS } from '@/types';
+import type { FollowupTask, ContactRecord, Patient } from '@/types';
+import { formatDate, formatDateTime, getRelativeDate, getToday, addDays } from '@/utils/date';
+import { generateFollowupTask } from '@/utils/psqi';
 import { RiskBadge } from '@/components/RiskBadge';
 
 const FollowupPlan: React.FC = () => {
@@ -26,16 +28,25 @@ const FollowupPlan: React.FC = () => {
     getPatientById,
     getLatestAssessment,
     updateFollowupTask,
+    addFollowupTask,
     addContactRecord,
     getPatientContactRecords,
+    getHighRiskPatients,
   } = useAppStore();
   
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'overdue'>('all');
   const [selectedTask, setSelectedTask] = useState<FollowupTask | null>(null);
   const [showContactModal, setShowContactModal] = useState(false);
+  const [showBatchRescheduleModal, setShowBatchRescheduleModal] = useState(false);
+  const [showBatchCreateModal, setShowBatchCreateModal] = useState(false);
   const [contactResult, setContactResult] = useState<'success' | 'failed' | 'no_answer'>('success');
   const [contactContent, setContactContent] = useState('');
   const [taskConclusion, setTaskConclusion] = useState('');
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [batchRescheduleDate, setBatchRescheduleDate] = useState(getToday());
+  const [batchCreateRiskLevel, setBatchCreateRiskLevel] = useState<'moderate' | 'severe' | 'both'>('both');
+  const [batchCreateType, setBatchCreateType] = useState<'phone' | 'sms'>('phone');
+  const [batchCreateDate, setBatchCreateDate] = useState(getToday());
   
   const filteredTasks = getFilteredTasks();
   
@@ -43,6 +54,37 @@ const FollowupPlan: React.FC = () => {
     if (activeTab === 'all') return true;
     return task.status === activeTab;
   });
+  
+  const incompleteTasks = useMemo(() => {
+    return displayedTasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'overdue');
+  }, [displayedTasks]);
+
+  const selectableTasks = useMemo(() => {
+    return displayedTasks.filter(t => t.status !== 'completed');
+  }, [displayedTasks]);
+
+  const allSelectableSelected = selectableTasks.length > 0 && selectableTasks.every(t => selectedTaskIds.has(t.id));
+  const someSelected = selectedTaskIds.size > 0;
+
+  const toggleTaskSelection = (taskId: string) => {
+    setSelectedTaskIds(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelectableSelected) {
+      setSelectedTaskIds(new Set());
+    } else {
+      setSelectedTaskIds(new Set(selectableTasks.map(t => t.id)));
+    }
+  };
   
   const tabs = [
     { key: 'all', label: '全部', count: filteredTasks.length },
@@ -54,6 +96,49 @@ const FollowupPlan: React.FC = () => {
   
   const handleStartTask = (task: FollowupTask) => {
     updateFollowupTask(task.id, { status: 'in_progress', assignedTo: '张医生' });
+  };
+
+  const handleBatchReschedule = () => {
+    selectedTaskIds.forEach(id => {
+      updateFollowupTask(id, { scheduledDate: batchRescheduleDate, status: 'pending' });
+    });
+    setSelectedTaskIds(new Set());
+    setShowBatchRescheduleModal(false);
+    setBatchRescheduleDate(getToday());
+  };
+
+  const handleBatchCreatePhoneFollowups = () => {
+    const targetPatients = patients.filter((p: Patient) => {
+      if (batchCreateRiskLevel === 'both') return p.riskLevel === 'moderate' || p.riskLevel === 'severe';
+      return p.riskLevel === batchCreateRiskLevel;
+    });
+
+    let created = 0;
+    targetPatients.forEach((p: Patient) => {
+      const hasPending = followupTasks.some(t => 
+        t.patientId === p.id && (t.status === 'pending' || t.status === 'in_progress')
+      );
+      if (hasPending) return;
+
+      const latest = getLatestAssessment(p.id);
+      const priority = p.riskLevel === 'severe' ? 'urgent' : 'high';
+      addFollowupTask({
+        patientId: p.id,
+        type: batchCreateType,
+        scheduledDate: batchCreateDate,
+        status: 'pending',
+        priority,
+        conclusion: '',
+        assignedTo: '',
+        completedAt: '',
+      });
+      created++;
+    });
+
+    setShowBatchCreateModal(false);
+    setBatchCreateRiskLevel('both');
+    setBatchCreateType('phone');
+    setBatchCreateDate(getToday());
   };
   
   const handleCompleteTask = () => {
@@ -128,7 +213,7 @@ const FollowupPlan: React.FC = () => {
             {tabs.map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key as typeof activeTab)}
+                onClick={() => { setActiveTab(tab.key as typeof activeTab); setSelectedTaskIds(new Set()); }}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                   activeTab === tab.key
                     ? 'bg-primary-500 text-white'
@@ -156,6 +241,45 @@ const FollowupPlan: React.FC = () => {
             onChange={(e) => setFilterTaskStatus(e.target.value)}
           />
         </div>
+
+        {selectableTasks.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3 p-4 bg-primary-50 border border-primary-200 rounded-xl">
+            <button
+              onClick={toggleSelectAll}
+              className="flex items-center gap-2 text-sm text-neutral-700 hover:text-primary-600 transition-colors"
+            >
+              {allSelectableSelected ? <CheckSquare size={18} className="text-primary-600" /> : <Square size={18} className="text-neutral-400" />}
+              <span className="font-medium">
+                {allSelectableSelected ? '取消全选' : '全选未完成任务'}
+              </span>
+            </button>
+            {someSelected && (
+              <>
+                <span className="text-sm text-neutral-600">
+                  已选 <span className="font-semibold text-primary-600">{selectedTaskIds.size}</span> 项
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  leftIcon={<CalendarClock size={14} />}
+                  onClick={() => setShowBatchRescheduleModal(true)}
+                >
+                  批量改期
+                </Button>
+              </>
+            )}
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Users size={14} />}
+                onClick={() => setShowBatchCreateModal(true)}
+              >
+                批量安排随访
+              </Button>
+            </div>
+          </div>
+        )}
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {displayedTasks.map((task, index) => {
@@ -165,6 +289,8 @@ const FollowupPlan: React.FC = () => {
             const priorityConfig = TASK_PRIORITY[task.priority];
             const typeConfig = TASK_TYPE[task.type];
             const TaskIcon = getTaskIcon(task.type);
+            const isSelected = selectedTaskIds.has(task.id);
+            const canSelect = task.status !== 'completed';
             
             const priorityColors = {
               urgent: 'border-l-4 border-l-danger-500',
@@ -178,24 +304,37 @@ const FollowupPlan: React.FC = () => {
                 key={task.id}
                 className={`${priorityColors[task.priority]} animate-fade-in-up ${
                   task.priority === 'urgent' && task.status !== 'completed' ? 'animate-breathe' : ''
-                }`}
+                } ${isSelected ? 'ring-2 ring-primary-400' : ''}`}
                 style={{ animationDelay: `${index * 50}ms` }}
               >
                 <CardBody>
                   <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2.5 rounded-lg ${
-                        task.type === 'phone' ? 'bg-primary-50 text-primary-500' :
-                        task.type === 'sms' ? 'bg-success-50 text-success-500' : 'bg-warning-50 text-warning-500'
-                      }`}>
-                        {TaskIcon}
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-neutral-700 flex items-center gap-2">
-                          {patient?.name || '未知患者'}
-                          {latestAssessment && <RiskBadge score={latestAssessment.totalScore} showLabel={false} size="sm" />}
-                        </h4>
-                        <p className="text-sm text-neutral-500">{typeConfig.label}</p>
+                    <div className="flex items-start gap-3">
+                      {canSelect && (
+                        <button
+                          onClick={() => toggleTaskSelection(task.id)}
+                          className="mt-0.5 flex-shrink-0"
+                        >
+                          {isSelected 
+                            ? <CheckSquare size={18} className="text-primary-600" /> 
+                            : <Square size={18} className="text-neutral-400 hover:text-primary-400" />
+                          }
+                        </button>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2.5 rounded-lg ${
+                          task.type === 'phone' ? 'bg-primary-50 text-primary-500' :
+                          task.type === 'sms' ? 'bg-success-50 text-success-500' : 'bg-warning-50 text-warning-500'
+                        }`}>
+                          {TaskIcon}
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-neutral-700 flex items-center gap-2">
+                            {patient?.name || '未知患者'}
+                            {latestAssessment && <RiskBadge score={latestAssessment.totalScore} showLabel={false} size="sm" />}
+                          </h4>
+                          <p className="text-sm text-neutral-500">{typeConfig.label}</p>
+                        </div>
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-1.5">
@@ -369,6 +508,94 @@ const FollowupPlan: React.FC = () => {
             onChange={(e) => setTaskConclusion(e.target.value)}
             rows={3}
           />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showBatchRescheduleModal}
+        onClose={() => setShowBatchRescheduleModal(false)}
+        title="批量改期"
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowBatchRescheduleModal(false)}>取消</Button>
+            <Button onClick={handleBatchReschedule} leftIcon={<CalendarClock size={18} />}>
+              确认改期（{selectedTaskIds.size} 项）
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="p-4 bg-warning-50 border border-warning-200 rounded-lg">
+            <p className="text-sm text-warning-700">
+              将为已选中的 <span className="font-semibold">{selectedTaskIds.size}</span> 项任务统一改期。
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-2">统一改期至</label>
+            <input
+              type="date"
+              value={batchRescheduleDate}
+              min={getToday()}
+              onChange={(e) => setBatchRescheduleDate(e.target.value)}
+              className="w-full px-4 py-2.5 text-sm border border-neutral-300 rounded-lg hover:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
+            />
+            <p className="text-xs text-neutral-500 mt-2">
+              提示：改期后任务状态将自动重置为"待随访"
+            </p>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showBatchCreateModal}
+        onClose={() => setShowBatchCreateModal(false)}
+        title="批量安排随访"
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setShowBatchCreateModal(false)}>取消</Button>
+            <Button onClick={handleBatchCreatePhoneFollowups} leftIcon={<Users size={18} />}>
+              生成随访任务
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="p-4 bg-primary-50 border border-primary-200 rounded-lg">
+            <p className="text-sm text-primary-700">
+              为满足条件且当前没有待办/进行中任务的患者批量生成随访。
+            </p>
+          </div>
+          <Select
+            label="目标风险分层"
+            options={[
+              { value: 'both', label: '中度 + 重度（推荐）' },
+              { value: 'severe', label: '仅重度 (PSQI ≥ 15)' },
+              { value: 'moderate', label: '仅中度 (8 ≤ PSQI ≤ 14)' },
+            ]}
+            value={batchCreateRiskLevel}
+            onChange={(e) => setBatchCreateRiskLevel(e.target.value as typeof batchCreateRiskLevel)}
+          />
+          <Select
+            label="随访方式"
+            options={[
+              { value: 'phone', label: '电话随访' },
+              { value: 'sms', label: '短信提醒' },
+            ]}
+            value={batchCreateType}
+            onChange={(e) => setBatchCreateType(e.target.value as typeof batchCreateType)}
+          />
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 mb-2">计划随访日期</label>
+            <input
+              type="date"
+              value={batchCreateDate}
+              min={getToday()}
+              onChange={(e) => setBatchCreateDate(e.target.value)}
+              className="w-full px-4 py-2.5 text-sm border border-neutral-300 rounded-lg hover:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
+            />
+          </div>
         </div>
       </Modal>
     </Layout>

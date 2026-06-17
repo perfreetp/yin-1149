@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, FileText, Calendar, TrendingUp, Save, Plus, Pill, Activity, PhoneCall, MessageSquare, CheckCircle, XCircle, AlertCircle, Clock } from 'lucide-react';
+import { ArrowLeft, User, Phone, FileText, Calendar, TrendingUp, Save, Plus, Pill, Activity, PhoneCall, MessageSquare, CheckCircle, XCircle, AlertCircle, Clock, Filter, History } from 'lucide-react';
 import { Layout } from '@/components/Layout';
-import { PSQIForm } from '@/components/PSQIForm';
+import { PSQIForm, type PSQIFormRef } from '@/components/PSQIForm';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useAppStore } from '@/store/useAppStore';
 import type { PSQIAssessment, Intervention } from '@/types';
 import { getSuggestedFollowupDate, getRiskLevelLabel } from '@/utils/psqi';
-import { formatDate, formatDateTime, getRelativeDate } from '@/utils/date';
+import { formatDate, formatDateTime, getRelativeDate, getToday } from '@/utils/date';
 import {
   LineChart,
   Line,
@@ -45,9 +45,11 @@ const Assessment: React.FC = () => {
     addIntervention,
   } = useAppStore();
   
+  const psqiFormRef = React.useRef<PSQIFormRef>(null);
   const [selectedPatientId, setSelectedPatientId] = useState(patientId || '');
   const [showNewAssessment, setShowNewAssessment] = useState(!patientId);
   const [showInterventionModal, setShowInterventionModal] = useState(false);
+  const [timelineFilter, setTimelineFilter] = useState<'all' | 'assessment' | 'followup' | 'intervention' | 'contact'>('all');
   const [newIntervention, setNewIntervention] = useState({
     type: 'medication' as 'medication' | 'non_medication',
     name: '',
@@ -65,6 +67,94 @@ const Assessment: React.FC = () => {
   const contactRecords = selectedPatientId ? getPatientContactRecords(selectedPatientId) : [];
   const latestAssessment = assessments[0];
   const previousAssessment = assessments[1];
+  
+  const timeline = useMemo(() => {
+    if (!patient) return [];
+    const items: any[] = [];
+
+    items.push({
+      id: `profile-${patient.id}`,
+      type: 'profile' as const,
+      date: patient.firstVisitDate,
+      time: `${patient.firstVisitDate} 09:00`,
+      title: '患者建档',
+      content: `${patient.gender === 'male' ? '男' : '女'}，${patient.age}岁，主诉：${patient.chiefComplaint}`,
+      color: 'primary',
+      icon: User,
+    });
+
+    assessments.forEach((a) => {
+      const riskLabel = getRiskLevelLabel(a.totalScore);
+      items.push({
+        id: `assessment-${a.id}`,
+        type: 'assessment' as const,
+        date: a.assessmentDate,
+        time: a.createdAt,
+        title: `PSQI 评估 - ${a.assessmentType === 'initial' ? '初诊' : '复诊'}`,
+        score: a.totalScore,
+        risk: riskLabel,
+        riskLevel: a.totalScore >= 15 ? 'danger' : a.totalScore >= 8 ? 'warning' : 'success',
+        content: a.notes || `总分 ${a.totalScore} 分，${riskLabel}`,
+        color: a.totalScore >= 15 ? 'danger' : a.totalScore >= 8 ? 'warning' : 'success',
+        icon: Activity,
+      });
+    });
+
+    interventions.forEach((i) => {
+      items.push({
+        id: `intervention-${i.id}`,
+        type: 'intervention' as const,
+        date: i.startDate,
+        time: `${i.startDate} 09:00`,
+        title: `${i.type === 'medication' ? '药物' : '非药物'}干预方案`,
+        content: i.name + (i.dosage ? ` ${i.dosage}` : '') + (i.frequency ? ` ${i.frequency}` : '') + (i.notes ? `，${i.notes}` : ''),
+        color: 'success',
+        icon: Pill,
+      });
+    });
+
+    tasks.forEach((t) => {
+      if (t.status === 'completed') {
+        items.push({
+          id: `task-${t.id}`,
+          type: 'followup' as const,
+          date: t.scheduledDate,
+          time: t.completedAt || `${t.scheduledDate} 10:00`,
+          title: `随访结论 - ${t.type === 'phone' ? '电话' : t.type === 'sms' ? '短信' : '门诊'}`,
+          result: 'success' as const,
+          content: t.conclusion || '随访完成',
+          color: 'success' as const,
+          icon: PhoneCall,
+        });
+      }
+    });
+
+    contactRecords.forEach((c) => {
+      items.push({
+        id: `contact-${c.id}`,
+        type: 'contact' as const,
+        date: c.contactTime.split(' ')[0],
+        time: c.contactTime,
+        title: `触达记录 - ${c.type === 'phone' ? '电话' : c.type === 'sms' ? '短信' : '门诊'}`,
+        result: c.result,
+        operator: c.operator,
+        content: c.content || '无沟通内容',
+        color: c.result === 'success' ? 'success' : c.result === 'failed' ? 'danger' : 'warning',
+        icon: c.type === 'phone' ? PhoneCall : c.type === 'sms' ? MessageSquare : User,
+      });
+    });
+
+    return items
+      .filter((i) => {
+        if (timelineFilter === 'all') return true;
+        if (timelineFilter === 'assessment') return i.type === 'assessment';
+        if (timelineFilter === 'followup') return i.type === 'followup';
+        if (timelineFilter === 'intervention') return i.type === 'intervention';
+        if (timelineFilter === 'contact') return i.type === 'contact';
+        return true;
+      })
+      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+  }, [patient, assessments, interventions, tasks, contactRecords, timelineFilter]);
   
   useEffect(() => {
     if (patientId) {
@@ -259,6 +349,8 @@ const Assessment: React.FC = () => {
                 </CardHeader>
                 <CardBody>
                   <PSQIForm
+                    ref={psqiFormRef}
+                    formId="psqi-assessment-form"
                     patientId={selectedPatientId}
                     onSubmit={handleAssessmentSubmit}
                     initialData={{ assessmentType: assessments.length === 0 ? 'initial' : 'followup' }}
@@ -267,10 +359,8 @@ const Assessment: React.FC = () => {
                     <Button variant="ghost" onClick={() => setShowNewAssessment(false)}>取消</Button>
                     <Button 
                       leftIcon={<Save size={18} />}
-                      onClick={() => {
-                        const form = document.querySelector('form');
-                        if (form) form.dispatchEvent(new Event('submit', { cancelable: true }));
-                      }}
+                      form="psqi-assessment-form"
+                      type="submit"
                     >
                       保存评估
                     </Button>
@@ -563,6 +653,107 @@ const Assessment: React.FC = () => {
                             <p className="text-sm text-neutral-700 whitespace-pre-wrap">{record.content || '无记录'}</p>
                           </div>
                           <p className="text-xs text-neutral-400 mt-2">操作人：{record.operator}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+            
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle className="flex items-center gap-2">
+                    <History size={18} className="text-primary-500" />
+                    就诊时间轴
+                  </CardTitle>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 text-xs text-neutral-500">
+                      <Filter size={14} />
+                      筛选：
+                    </div>
+                    {([
+                      { key: 'all', label: '全部' },
+                      { key: 'assessment', label: 'PSQI评估' },
+                      { key: 'followup', label: '随访结论' },
+                      { key: 'intervention', label: '干预方案' },
+                      { key: 'contact', label: '触达记录' },
+                    ] as const).map((f) => (
+                      <Badge
+                        key={f.key}
+                        variant={timelineFilter === f.key ? 'primary' : 'neutral'}
+                        size="sm"
+                        className="cursor-pointer"
+                        onClick={() => setTimelineFilter(f.key)}
+                      >
+                        {f.label}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardBody>
+                {timeline.length === 0 ? (
+                  <div className="text-center py-8 text-neutral-500">
+                    暂无记录
+                  </div>
+                ) : (
+                  <div className="relative pl-8">
+                    <div className="absolute left-3 top-1 bottom-1 w-0.5 bg-neutral-200" />
+                    {timeline.map((item, index) => {
+                      const Icon = item.icon;
+                      const dotColors: Record<string, string> = {
+                        primary: 'bg-primary-500 ring-primary-100',
+                        success: 'bg-success-500 ring-success-100',
+                        warning: 'bg-warning-500 ring-warning-100',
+                        danger: 'bg-danger-500 ring-danger-100',
+                      };
+                      const borderColors: Record<string, string> = {
+                        primary: 'border-primary-200 bg-primary-50/50',
+                        success: 'border-success-200 bg-success-50/50',
+                        warning: 'border-warning-200 bg-warning-50/50',
+                        danger: 'border-danger-200 bg-danger-50/50',
+                      };
+                      const textColors: Record<string, string> = {
+                        primary: 'text-primary-600',
+                        success: 'text-success-600',
+                        warning: 'text-warning-600',
+                        danger: 'text-danger-600',
+                      };
+                      
+                      return (
+                        <div key={item.id} className="relative pb-8 last:pb-0 animate-fade-in-up" style={{ animationDelay: `${index * 40}ms` }}>
+                          <div className={`absolute -left-[22px] top-0.5 w-7 h-7 rounded-full flex items-center justify-center ring-4 ${dotColors[item.color as keyof typeof dotColors]}`}>
+                            <Icon size={14} className="text-white" />
+                          </div>
+                          <div className={`p-4 rounded-lg border ${borderColors[item.color as keyof typeof borderColors]}`}>
+                            <div className="flex items-start justify-between gap-3 mb-2">
+                              <div className="flex items-center gap-2">
+                                <h5 className={`font-semibold text-sm ${textColors[item.color as keyof typeof textColors]}`}>
+                                  {item.title}
+                                </h5>
+                                {item.score !== undefined && (
+                                  <Badge variant={item.riskLevel as 'success' | 'warning' | 'danger'} size="sm">
+                                    PSQI {item.score}分 · {item.risk}
+                                  </Badge>
+                                )}
+                                {item.result && (
+                                  <Badge variant={item.result === 'success' ? 'success' : item.result === 'failed' ? 'danger' : 'warning'} size="sm">
+                                    {item.result === 'success' ? '成功' : item.result === 'failed' ? '失败' : '未接通'}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 text-xs text-neutral-500 flex-shrink-0">
+                                <Clock size={12} />
+                                {item.time}
+                              </div>
+                            </div>
+                            <p className="text-sm text-neutral-700 whitespace-pre-wrap">{item.content}</p>
+                            {item.operator && (
+                              <p className="text-xs text-neutral-400 mt-2">操作人：{item.operator}</p>
+                            )}
+                          </div>
                         </div>
                       );
                     })}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
 import { PSQI_COMPONENTS, PSQI_OPTIONS } from '@/types';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
@@ -8,13 +8,20 @@ import { getToday } from '@/utils/date';
 import type { PSQIAssessment } from '@/types';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
+export interface PSQIFormRef {
+  submit: () => void;
+  getTotalScore: () => number;
+}
+
 interface PSQIFormProps {
   patientId: string;
+  formId?: string;
   onSubmit: (data: Omit<PSQIAssessment, 'id' | 'createdAt'>) => void;
   initialData?: Partial<PSQIAssessment>;
 }
 
-export const PSQIForm: React.FC<PSQIFormProps> = ({ patientId, onSubmit, initialData }) => {
+export const PSQIForm = forwardRef<PSQIFormRef, PSQIFormProps>(({ patientId, formId = 'psqi-form', onSubmit, initialData }, ref) => {
+  const formRef = useRef<HTMLFormElement>(null);
   const [formData, setFormData] = useState({
     sleepQuality: initialData?.sleepQuality ?? 0,
     sleepLatency: initialData?.sleepLatency ?? 0,
@@ -29,6 +36,13 @@ export const PSQIForm: React.FC<PSQIFormProps> = ({ patientId, onSubmit, initial
   });
   
   const [totalScore, setTotalScore] = useState(0);
+
+  useImperativeHandle(ref, () => ({
+    submit: () => {
+      formRef.current?.requestSubmit();
+    },
+    getTotalScore: () => totalScore,
+  }));
   
   useEffect(() => {
     const scores = {
@@ -77,7 +91,7 @@ export const PSQIForm: React.FC<PSQIFormProps> = ({ patientId, onSubmit, initial
   const componentEntries = Object.entries(PSQI_COMPONENTS) as [keyof typeof PSQI_COMPONENTS, typeof PSQI_COMPONENTS[keyof typeof PSQI_COMPONENTS]][];
   
   return (
-    <form onSubmit={handleSubmit} className="space-y-8">
+    <form ref={formRef} id={formId} onSubmit={handleSubmit} className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {componentEntries.map(([key, component]) => (
           <div key={key} className="bg-white p-5 rounded-lg border border-neutral-200">
@@ -150,4 +164,6 @@ export const PSQIForm: React.FC<PSQIFormProps> = ({ patientId, onSubmit, initial
       />
     </form>
   );
-};
+});
+
+PSQIForm.displayName = 'PSQIForm';
