@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, FileText, Calendar, TrendingUp, Save, Plus, Pill, Activity } from 'lucide-react';
+import { ArrowLeft, User, Phone, FileText, Calendar, TrendingUp, Save, Plus, Pill, Activity, PhoneCall, MessageSquare, CheckCircle, XCircle, AlertCircle, Clock } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PSQIForm } from '@/components/PSQIForm';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
@@ -40,6 +40,7 @@ const Assessment: React.FC = () => {
     getPatientAssessments,
     getPatientInterventions,
     getPatientTasks,
+    getPatientContactRecords,
     addAssessment,
     addIntervention,
   } = useAppStore();
@@ -61,6 +62,7 @@ const Assessment: React.FC = () => {
   const assessments = selectedPatientId ? getPatientAssessments(selectedPatientId) : [];
   const interventions = selectedPatientId ? getPatientInterventions(selectedPatientId) : [];
   const tasks = selectedPatientId ? getPatientTasks(selectedPatientId) : [];
+  const contactRecords = selectedPatientId ? getPatientContactRecords(selectedPatientId) : [];
   const latestAssessment = assessments[0];
   const previousAssessment = assessments[1];
   
@@ -69,6 +71,12 @@ const Assessment: React.FC = () => {
       setSelectedPatientId(patientId);
     }
   }, [patientId]);
+
+  useEffect(() => {
+    if (patient && assessments.length === 0) {
+      setShowNewAssessment(true);
+    }
+  }, [patient, assessments.length]);
   
   const handleAssessmentSubmit = (data: Omit<PSQIAssessment, 'id' | 'createdAt'>) => {
     if (!selectedPatientId) return;
@@ -492,6 +500,74 @@ const Assessment: React.FC = () => {
                     ))
                   )}
                 </div>
+              </CardBody>
+            </Card>
+            
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <PhoneCall size={18} className="text-primary-500" />
+                    触达记录
+                  </CardTitle>
+                  <Badge variant="neutral" size="sm">{contactRecords.length} 条记录</Badge>
+                </div>
+              </CardHeader>
+              <CardBody>
+                {contactRecords.length === 0 ? (
+                  <div className="text-center py-8 text-neutral-500">
+                    暂无触达记录，完成随访任务后会自动记录
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-80 overflow-y-auto">
+                    {contactRecords.map((record) => {
+                      const recordIcon = record.type === 'phone' ? <PhoneCall size={16} /> : record.type === 'sms' ? <MessageSquare size={16} /> : <User size={16} />;
+                      const resultConfig = {
+                        success: { icon: CheckCircle, color: 'text-success-500', bg: 'bg-success-50', border: 'border-success-200', label: '成功联系' },
+                        failed: { icon: XCircle, color: 'text-danger-500', bg: 'bg-danger-50', border: 'border-danger-200', label: '联系失败' },
+                        no_answer: { icon: AlertCircle, color: 'text-warning-500', bg: 'bg-warning-50', border: 'border-warning-200', label: '无人接听' },
+                      };
+                      const config = resultConfig[record.result];
+                      const ResultIcon = config.icon;
+                      
+                      return (
+                        <div 
+                          key={record.id}
+                          className={`p-4 rounded-lg border ${config.border} ${config.bg}`}
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`p-1.5 rounded-md ${config.bg} ${config.color}`}>
+                                {recordIcon}
+                              </span>
+                              <div>
+                                <span className="text-sm font-medium text-neutral-700">
+                                  {record.type === 'phone' ? '电话随访' : record.type === 'sms' ? '短信提醒' : '门诊复诊'}
+                                </span>
+                                <div className="flex items-center gap-1.5 text-xs text-neutral-500 mt-0.5">
+                                  <Clock size={12} />
+                                  {record.contactTime}
+                                </div>
+                              </div>
+                            </div>
+                            <Badge 
+                              variant={record.result === 'success' ? 'success' : record.result === 'failed' ? 'danger' : 'warning'} 
+                              size="sm"
+                            >
+                              <ResultIcon size={12} className="mr-1" />
+                              {config.label}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-neutral-200">
+                            <p className="text-xs text-neutral-500 mb-1">沟通内容：</p>
+                            <p className="text-sm text-neutral-700 whitespace-pre-wrap">{record.content || '无记录'}</p>
+                          </div>
+                          <p className="text-xs text-neutral-400 mt-2">操作人：{record.operator}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardBody>
             </Card>
           </>

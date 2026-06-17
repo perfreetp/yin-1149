@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Patient, PSQIAssessment, FollowupTask, Intervention, ContactRecord } from '@/types';
 import { mockPatients, mockAssessments, mockFollowupTasks, mockInterventions, mockContactRecords } from '@/data/mockData';
 import { generateFollowupTask, getRiskLevel } from '@/utils/psqi';
@@ -48,7 +49,9 @@ interface AppState {
 
 const generateId = () => Math.random().toString(36).substring(2, 15);
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
   patients: [],
   assessments: [],
   followupTasks: [],
@@ -232,4 +235,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       contactRecords: mockContactRecords,
     });
   },
-}));
+    }),
+    {
+      name: 'sleep-clinic-storage',
+      partialize: (state) => ({
+        patients: state.patients,
+        assessments: state.assessments,
+        followupTasks: state.followupTasks,
+        interventions: state.interventions,
+        contactRecords: state.contactRecords,
+      }),
+    }
+  )
+);

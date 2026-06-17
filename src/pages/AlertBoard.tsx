@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Phone, PhoneCall, Calendar, User, Clock, AlertCircle, CheckCircle, Eye, TrendingUp, Bell, X } from 'lucide-react';
+import { AlertTriangle, Phone, PhoneCall, Calendar, User, Clock, AlertCircle, CheckCircle, Eye, TrendingUp, ClipboardList } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -23,6 +23,7 @@ const AlertBoard: React.FC = () => {
     getOverdueTasks,
     getLatestAssessment,
     getPatientTasks,
+    getPatientAssessments,
     updatePatient,
     updateFollowupTask,
     addFollowupTask,
@@ -36,6 +37,7 @@ const AlertBoard: React.FC = () => {
   
   const highRiskPatients = getHighRiskPatients();
   const overdueTasks = getOverdueTasks();
+  const pendingAssessmentPatients = patients.filter(p => getPatientAssessments(p.id).length === 0);
   
   const highRiskWithData = highRiskPatients.map((patient) => {
     const latestAssessment = getLatestAssessment(patient.id);
@@ -60,9 +62,9 @@ const AlertBoard: React.FC = () => {
   
   const stats = [
     { label: '高风险患者', value: highRiskPatients.length, color: 'danger', icon: AlertTriangle },
+    { label: '待补录量表', value: pendingAssessmentPatients.length, color: 'warning', icon: ClipboardList },
     { label: '逾期任务', value: overdueTasks.length, color: 'warning', icon: Clock },
     { label: '需紧急处理', value: highRiskWithData.filter(p => p.latestAssessment && p.latestAssessment.totalScore >= 18).length, color: 'danger', icon: AlertCircle },
-    { label: '今日待处理', value: highRiskWithData.filter(p => p.overdueTask?.scheduledDate === getToday()).length, color: 'primary', icon: Bell },
   ];
   
   const handleAlertAction = (type: 'call' | 'visit' | 'observe', patient: Patient) => {
@@ -145,6 +147,63 @@ const AlertBoard: React.FC = () => {
             );
           })}
         </div>
+        
+        {pendingAssessmentPatients.length > 0 && (
+          <Card className="animate-fade-in-up border-warning-300">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <ClipboardList className="text-warning-500" size={20} />
+                  待补录 PSQI 量表
+                </CardTitle>
+                <Badge variant="warning" size="sm">
+                  {pendingAssessmentPatients.length} 位患者
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardBody>
+              <p className="text-sm text-neutral-500 mb-4">
+                以下患者已建档但尚未完成 PSQI 量表评估，请安排护士尽快补录，补录后提醒将自动消失。
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {pendingAssessmentPatients.map((patient, index) => (
+                  <div 
+                    key={patient.id}
+                    className="p-4 bg-warning-50 border border-warning-200 rounded-lg hover:bg-warning-100 transition-colors cursor-pointer animate-fade-in-up"
+                    style={{ animationDelay: `${index * 50}ms` }}
+                    onClick={() => navigate(`/assessment/${patient.id}`)}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 rounded-full bg-warning-100 flex items-center justify-center">
+                        <User className="text-warning-500" size={20} />
+                      </div>
+                      <div>
+                        <p className="font-medium text-neutral-700">{patient.name}</p>
+                        <p className="text-xs text-neutral-500">
+                          {patient.gender === 'male' ? '男' : '女'} · {patient.age}岁 · {patient.medicalRecordNo}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-neutral-500">
+                      <span>建档：{patient.firstVisitDate}</span>
+                      <Button 
+                        size="xs"
+                        variant="primary"
+                        leftIcon={<ClipboardList size={12} />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/assessment/${patient.id}`);
+                        }}
+                      >
+                        去补录
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+        )}
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="lg:col-span-2 space-y-4">

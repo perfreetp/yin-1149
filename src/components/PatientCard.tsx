@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Phone, Calendar, Clock, FileText, Plus } from 'lucide-react';
+import { User, Phone, Calendar, Clock, FileText, Plus, ClipboardList, AlertTriangle } from 'lucide-react';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -19,10 +19,13 @@ export const PatientCard: React.FC<PatientCardProps> = ({ patient, index }) => {
   const navigate = useNavigate();
   const getLatestAssessment = useAppStore((state) => state.getLatestAssessment);
   const getPatientTasks = useAppStore((state) => state.getPatientTasks);
+  const getPatientAssessments = useAppStore((state) => state.getPatientAssessments);
   
   const latestAssessment = getLatestAssessment(patient.id);
+  const assessments = getPatientAssessments(patient.id);
   const tasks = getPatientTasks(patient.id);
   const nextTask = tasks.find((t) => t.status === 'pending' || t.status === 'in_progress');
+  const hasNoAssessment = assessments.length === 0;
   
   const taskStatusConfig = nextTask ? TASK_STATUS[nextTask.status] : null;
   const taskPriorityConfig = nextTask ? TASK_PRIORITY[nextTask.priority] : null;
@@ -32,7 +35,7 @@ export const PatientCard: React.FC<PatientCardProps> = ({ patient, index }) => {
   return (
     <Card 
       hoverable 
-      className="animate-fade-in-up"
+      className={`animate-fade-in-up ${hasNoAssessment ? 'border-warning-300' : ''}`}
       style={{ animationDelay }}
       onClick={() => navigate(`/assessment/${patient.id}`)}
     >
@@ -49,10 +52,33 @@ export const PatientCard: React.FC<PatientCardProps> = ({ patient, index }) => {
               </p>
             </div>
           </div>
-          {latestAssessment && (
+          {latestAssessment ? (
             <RiskBadge score={latestAssessment.totalScore} />
+          ) : (
+            <Badge variant="warning" size="sm" className="animate-pulse-soft">
+              <AlertTriangle size={12} className="mr-1" />
+              待评估
+            </Badge>
           )}
         </div>
+        
+        {hasNoAssessment && (
+          <div 
+            className="mb-4 p-3 bg-warning-50 border border-warning-200 rounded-lg cursor-pointer hover:bg-warning-100 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/assessment/${patient.id}`);
+            }}
+          >
+            <div className="flex items-center gap-2 text-sm text-warning-700">
+              <ClipboardList size={16} className="flex-shrink-0" />
+              <span className="font-medium">PSQI 量表未完成</span>
+            </div>
+            <p className="text-xs text-warning-600 mt-1 ml-6">
+              该患者建档后尚未进行 PSQI 评估，请尽快补录
+            </p>
+          </div>
+        )}
         
         <div className="space-y-2 mb-4">
           <div className="flex items-center gap-2 text-sm text-neutral-600">
@@ -94,14 +120,14 @@ export const PatientCard: React.FC<PatientCardProps> = ({ patient, index }) => {
           </div>
           <Button 
             size="sm" 
-            variant="outline"
+            variant={hasNoAssessment ? 'primary' : 'outline'}
             leftIcon={<Plus size={14} />}
             onClick={(e) => {
               e.stopPropagation();
               navigate(`/assessment/${patient.id}`);
             }}
           >
-            录入评估
+            {hasNoAssessment ? '补录评估' : '录入评估'}
           </Button>
         </div>
       </CardBody>

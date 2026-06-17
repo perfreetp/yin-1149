@@ -6,10 +6,15 @@ import { useAppStore } from '@/store/useAppStore'
 
 const AppInitializer = () => {
   const initMockData = useAppStore((state) => state.initMockData)
+  const patients = useAppStore((state) => state.patients)
   
   useEffect(() => {
-    initMockData()
-  }, [initMockData])
+    const initialized = localStorage.getItem('sleep-clinic-initialized')
+    if (!initialized && patients.length === 0) {
+      initMockData()
+      localStorage.setItem('sleep-clinic-initialized', 'true')
+    }
+  }, [initMockData, patients.length])
   
   return <App />
 }

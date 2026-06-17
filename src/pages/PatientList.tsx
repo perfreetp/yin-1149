@@ -24,8 +24,7 @@ const PatientList: React.FC = () => {
     addPatient,
     getHighRiskPatients,
     getPendingTasks,
-    assessments,
-    followupTasks,
+    getPatientAssessments,
   } = useAppStore();
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -43,7 +42,7 @@ const PatientList: React.FC = () => {
   const filteredPatients = getFilteredPatients();
   const highRiskCount = getHighRiskPatients().length;
   const pendingTaskCount = getPendingTasks().length;
-  const totalAssessments = assessments.length;
+  const pendingAssessmentCount = patients.filter(p => getPatientAssessments(p.id).length === 0).length;
   
   const handleAddPatient = () => {
     const patient = addPatient({
@@ -68,7 +67,7 @@ const PatientList: React.FC = () => {
     { label: '总患者数', value: patients.length, color: 'primary' },
     { label: '高风险患者', value: highRiskCount, color: 'danger' },
     { label: '待随访任务', value: pendingTaskCount, color: 'warning' },
-    { label: '评估总数', value: totalAssessments, color: 'success' },
+    { label: '待补录量表', value: pendingAssessmentCount, color: 'warning' },
   ];
   
   return (
