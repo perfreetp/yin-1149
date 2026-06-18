@@ -43,8 +43,9 @@ const FollowupPlan: React.FC = () => {
   const [contactContent, setContactContent] = useState('');
   const [taskConclusion, setTaskConclusion] = useState('');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [selectedPatientIds, setSelectedPatientIds] = useState<Set<string>>(new Set());
+  const [patientFilterRisk, setPatientFilterRisk] = useState<'all' | 'moderate' | 'severe'>('all');
   const [batchRescheduleDate, setBatchRescheduleDate] = useState(getToday());
-  const [batchCreateRiskLevel, setBatchCreateRiskLevel] = useState<'moderate' | 'severe' | 'both'>('both');
   const [batchCreateType, setBatchCreateType] = useState<'phone' | 'sms'>('phone');
   const [batchCreateDate, setBatchCreateDate] = useState(getToday());
   
@@ -100,27 +101,66 @@ const FollowupPlan: React.FC = () => {
 
   const handleBatchReschedule = () => {
     selectedTaskIds.forEach(id => {
-      updateFollowupTask(id, { scheduledDate: batchRescheduleDate, status: 'pending' });
+      updateFollowupTask(id, { 
+        scheduledDate: batchRescheduleDate, 
+        status: 'pending',
+        _operator: '随访专员',
+        _rescheduleReason: '批量改期',
+      });
     });
     setSelectedTaskIds(new Set());
     setShowBatchRescheduleModal(false);
     setBatchRescheduleDate(getToday());
   };
 
-  const handleBatchCreatePhoneFollowups = () => {
-    const targetPatients = patients.filter((p: Patient) => {
-      if (batchCreateRiskLevel === 'both') return p.riskLevel === 'moderate' || p.riskLevel === 'severe';
-      return p.riskLevel === batchCreateRiskLevel;
+  const selectablePatients = useMemo(() => {
+    return patients
+      .filter((p: Patient) => {
+        if (patientFilterRisk === 'all') return p.riskLevel === 'moderate' || p.riskLevel === 'severe';
+        return p.riskLevel === patientFilterRisk;
+      })
+      .sort((a: Patient, b: Patient) => {
+        const order = { severe: 0, moderate: 1, mild: 2 };
+        return order[a.riskLevel] - order[b.riskLevel];
+      });
+  }, [patients, patientFilterRisk]);
+
+  const hasPendingTask = (patientId: string) => {
+    return followupTasks.some(t => 
+      t.patientId === patientId && (t.status === 'pending' || t.status === 'in_progress')
+    );
+  };
+
+  const allPatientsSelected = selectablePatients.length > 0 && 
+    selectablePatients.every((p: Patient) => selectedPatientIds.has(p.id));
+
+  const togglePatientSelection = (patientId: string) => {
+    setSelectedPatientIds(prev => {
+      const next = new Set(prev);
+      if (next.has(patientId)) {
+        next.delete(patientId);
+      } else {
+        next.add(patientId);
+      }
+      return next;
     });
+  };
 
+  const toggleSelectAllPatients = () => {
+    if (allPatientsSelected) {
+      setSelectedPatientIds(new Set());
+    } else {
+      setSelectedPatientIds(new Set(selectablePatients.map((p: Patient) => p.id)));
+    }
+  };
+
+  const handleBatchCreatePhoneFollowups = () => {
     let created = 0;
-    targetPatients.forEach((p: Patient) => {
-      const hasPending = followupTasks.some(t => 
-        t.patientId === p.id && (t.status === 'pending' || t.status === 'in_progress')
-      );
-      if (hasPending) return;
+    selectedPatientIds.forEach(patientId => {
+      const p = getPatientById(patientId);
+      if (!p) return;
+      if (hasPendingTask(patientId)) return;
 
-      const latest = getLatestAssessment(p.id);
       const priority = p.riskLevel === 'severe' ? 'urgent' : 'high';
       addFollowupTask({
         patientId: p.id,
@@ -136,7 +176,8 @@ const FollowupPlan: React.FC = () => {
     });
 
     setShowBatchCreateModal(false);
-    setBatchCreateRiskLevel('both');
+    setSelectedPatientIds(new Set());
+    setPatientFilterRisk('all');
     setBatchCreateType('phone');
     setBatchCreateDate(getToday());
   };
@@ -549,14 +590,25 @@ const FollowupPlan: React.FC = () => {
 
       <Modal
         isOpen={showBatchCreateModal}
-        onClose={() => setShowBatchCreateModal(false)}
+        onClose={() => {
+          setShowBatchCreateModal(false);
+          setSelectedPatientIds(new Set());
+          setPatientFilterRisk('all');
+        }}
         title="批量安排随访"
-        size="md"
+        size="xl"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setShowBatchCreateModal(false)}>取消</Button>
-            <Button onClick={handleBatchCreatePhoneFollowups} leftIcon={<Users size={18} />}>
-              生成随访任务
+            <Button variant="ghost" onClick={() => {
+              setShowBatchCreateModal(false);
+              setSelectedPatientIds(new Set());
+            }}>取消</Button>
+            <Button 
+              onClick={handleBatchCreatePhoneFollowups} 
+              leftIcon={<Users size={18} />}
+              disabled={selectedPatientIds.size === 0}
+            >
+              为已选 {selectedPatientIds.size} 位患者生成随访任务
             </Button>
           </>
         }
@@ -564,37 +616,112 @@ const FollowupPlan: React.FC = () => {
         <div className="space-y-5">
           <div className="p-4 bg-primary-50 border border-primary-200 rounded-lg">
             <p className="text-sm text-primary-700">
-              为满足条件且当前没有待办/进行中任务的患者批量生成随访。
+              请勾选需要安排随访的患者，支持按风险分层快速筛选。仅会为当前没有待办/进行中任务的患者生成新任务。
             </p>
           </div>
-          <Select
-            label="目标风险分层"
-            options={[
-              { value: 'both', label: '中度 + 重度（推荐）' },
-              { value: 'severe', label: '仅重度 (PSQI ≥ 15)' },
-              { value: 'moderate', label: '仅中度 (8 ≤ PSQI ≤ 14)' },
-            ]}
-            value={batchCreateRiskLevel}
-            onChange={(e) => setBatchCreateRiskLevel(e.target.value as typeof batchCreateRiskLevel)}
-          />
-          <Select
-            label="随访方式"
-            options={[
-              { value: 'phone', label: '电话随访' },
-              { value: 'sms', label: '短信提醒' },
-            ]}
-            value={batchCreateType}
-            onChange={(e) => setBatchCreateType(e.target.value as typeof batchCreateType)}
-          />
-          <div>
-            <label className="block text-sm font-medium text-neutral-700 mb-2">计划随访日期</label>
-            <input
-              type="date"
-              value={batchCreateDate}
-              min={getToday()}
-              onChange={(e) => setBatchCreateDate(e.target.value)}
-              className="w-full px-4 py-2.5 text-sm border border-neutral-300 rounded-lg hover:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Select
+              label="随访方式"
+              options={[
+                { value: 'phone', label: '电话随访' },
+                { value: 'sms', label: '短信提醒' },
+              ]}
+              value={batchCreateType}
+              onChange={(e) => setBatchCreateType(e.target.value as typeof batchCreateType)}
             />
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-2">计划随访日期</label>
+              <input
+                type="date"
+                value={batchCreateDate}
+                min={getToday()}
+                onChange={(e) => setBatchCreateDate(e.target.value)}
+                className="w-full px-4 py-2.5 text-sm border border-neutral-300 rounded-lg hover:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-1 bg-white rounded-lg border border-neutral-200 p-1">
+              {([
+                { key: 'all', label: '中+重度' },
+                { key: 'severe', label: '仅重度' },
+                { key: 'moderate', label: '仅中度' },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setPatientFilterRisk(tab.key)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    patientFilterRisk === tab.key
+                      ? 'bg-primary-500 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-100'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 ml-auto">
+              <button
+                onClick={toggleSelectAllPatients}
+                className="flex items-center gap-2 text-sm text-neutral-700 hover:text-primary-600 transition-colors"
+              >
+                {allPatientsSelected ? <CheckSquare size={18} className="text-primary-600" /> : <Square size={18} className="text-neutral-400" />}
+                <span className="font-medium">{allPatientsSelected ? '取消全选' : '全选'}</span>
+              </button>
+              <span className="text-sm text-neutral-500">
+                已选 <span className="font-semibold text-primary-600">{selectedPatientIds.size}</span> / {selectablePatients.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="max-h-80 overflow-y-auto border border-neutral-200 rounded-lg">
+            {selectablePatients.length === 0 ? (
+              <div className="p-8 text-center text-neutral-500 text-sm">
+                暂无符合条件的患者
+              </div>
+            ) : (
+              selectablePatients.map((p: Patient) => {
+                const pending = hasPendingTask(p.id);
+                const selected = selectedPatientIds.has(p.id);
+                const latest = getLatestAssessment(p.id);
+                return (
+                  <div
+                    key={p.id}
+                    className={`flex items-start gap-3 px-4 py-3 border-b border-neutral-100 last:border-b-0 hover:bg-neutral-50 transition-colors ${
+                      selected ? 'bg-primary-50/60' : ''
+                    } ${pending ? 'opacity-60' : ''}`}
+                  >
+                    <button
+                      onClick={() => !pending && togglePatientSelection(p.id)}
+                      disabled={pending}
+                      className="mt-0.5 flex-shrink-0 disabled:cursor-not-allowed"
+                    >
+                      {selected 
+                        ? <CheckSquare size={18} className="text-primary-600" /> 
+                        : <Square size={18} className={pending ? 'text-neutral-300' : 'text-neutral-400 hover:text-primary-400'} />
+                      }
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-neutral-700">{p.name}</span>
+                        <span className="text-sm text-neutral-500">{p.gender === 'male' ? '男' : '女'} · {p.age}岁</span>
+                        {latest && <RiskBadge score={latest.totalScore} showLabel={false} size="sm" />}
+                        {pending && (
+                          <Badge variant="neutral" size="xs">已有待办任务</Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-neutral-500 mt-1 flex items-center gap-3 flex-wrap">
+                        <span>病历号：{p.medicalRecordNo}</span>
+                        <span>初诊：{p.firstVisitDate}</span>
+                      </div>
+                      <p className="text-sm text-neutral-600 mt-1 line-clamp-1">主诉：{p.chiefComplaint}</p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </Modal>

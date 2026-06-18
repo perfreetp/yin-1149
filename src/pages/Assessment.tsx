@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, User, Phone, FileText, Calendar, TrendingUp, Save, Plus, Pill, Activity, PhoneCall, MessageSquare, CheckCircle, XCircle, AlertCircle, Clock, Filter, History } from 'lucide-react';
+import { ArrowLeft, User, Phone, FileText, Calendar, TrendingUp, Save, Plus, Pill, Activity, PhoneCall, MessageSquare, CheckCircle, XCircle, AlertCircle, Clock, Filter, History, CalendarClock, AlertTriangle, Stethoscope } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PSQIForm, type PSQIFormRef } from '@/components/PSQIForm';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
@@ -41,6 +41,7 @@ const Assessment: React.FC = () => {
     getPatientInterventions,
     getPatientTasks,
     getPatientContactRecords,
+    getNextFollowupTask,
     addAssessment,
     addIntervention,
   } = useAppStore();
@@ -49,7 +50,7 @@ const Assessment: React.FC = () => {
   const [selectedPatientId, setSelectedPatientId] = useState(patientId || '');
   const [showNewAssessment, setShowNewAssessment] = useState(!patientId);
   const [showInterventionModal, setShowInterventionModal] = useState(false);
-  const [timelineFilter, setTimelineFilter] = useState<'all' | 'assessment' | 'followup' | 'intervention' | 'contact'>('all');
+  const [timelineFilter, setTimelineFilter] = useState<'all' | 'assessment' | 'followup' | 'intervention' | 'contact' | 'abnormal' | 'revisit'>('all');
   const [newIntervention, setNewIntervention] = useState({
     type: 'medication' as 'medication' | 'non_medication',
     name: '',
@@ -65,12 +66,16 @@ const Assessment: React.FC = () => {
   const interventions = selectedPatientId ? getPatientInterventions(selectedPatientId) : [];
   const tasks = selectedPatientId ? getPatientTasks(selectedPatientId) : [];
   const contactRecords = selectedPatientId ? getPatientContactRecords(selectedPatientId) : [];
+  const nextTask = selectedPatientId ? getNextFollowupTask(selectedPatientId) : undefined;
   const latestAssessment = assessments[0];
   const previousAssessment = assessments[1];
   
   const timeline = useMemo(() => {
     if (!patient) return [];
     const items: any[] = [];
+    const sortedAssessments = [...assessments].sort((a, b) =>
+      new Date(a.assessmentDate).getTime() - new Date(b.assessmentDate).getTime()
+    );
 
     items.push({
       id: `profile-${patient.id}`,
@@ -81,10 +86,15 @@ const Assessment: React.FC = () => {
       content: `${patient.gender === 'male' ? '男' : '女'}，${patient.age}岁，主诉：${patient.chiefComplaint}`,
       color: 'primary',
       icon: User,
+      abnormal: false,
+      revisit: false,
     });
 
-    assessments.forEach((a) => {
+    sortedAssessments.forEach((a, idx) => {
       const riskLabel = getRiskLevelLabel(a.totalScore);
+      const prev = idx > 0 ? sortedAssessments[idx - 1] : null;
+      const worsened = prev ? a.totalScore - prev.totalScore >= 3 : false;
+      const severe = a.totalScore >= 15;
       items.push({
         id: `assessment-${a.id}`,
         type: 'assessment' as const,
@@ -93,10 +103,12 @@ const Assessment: React.FC = () => {
         title: `PSQI 评估 - ${a.assessmentType === 'initial' ? '初诊' : '复诊'}`,
         score: a.totalScore,
         risk: riskLabel,
-        riskLevel: a.totalScore >= 15 ? 'danger' : a.totalScore >= 8 ? 'warning' : 'success',
-        content: a.notes || `总分 ${a.totalScore} 分，${riskLabel}`,
-        color: a.totalScore >= 15 ? 'danger' : a.totalScore >= 8 ? 'warning' : 'success',
+        riskLevel: severe ? 'danger' : a.totalScore >= 8 ? 'warning' : 'success',
+        content: a.notes || `总分 ${a.totalScore} 分，${riskLabel}${prev ? `，较上次 ${a.totalScore > prev.totalScore ? '+' : ''}${a.totalScore - prev.totalScore}` : ''}`,
+        color: severe ? 'danger' : worsened ? 'warning' : a.totalScore >= 8 ? 'warning' : 'success',
         icon: Activity,
+        abnormal: severe || worsened,
+        revisit: severe || (a.assessmentType === 'followup' && worsened),
       });
     });
 
@@ -110,10 +122,58 @@ const Assessment: React.FC = () => {
         content: i.name + (i.dosage ? ` ${i.dosage}` : '') + (i.frequency ? ` ${i.frequency}` : '') + (i.notes ? `，${i.notes}` : ''),
         color: 'success',
         icon: Pill,
+        abnormal: false,
+        revisit: i.type === 'medication',
       });
+      if (i.adjustmentHistory) {
+        i.adjustmentHistory.forEach((adj, adjIdx) => {
+          items.push({
+            id: `intervention-${i.id}-adj-${adjIdx}`,
+            type: 'intervention_adjust' as const,
+            date: adj.time.split(' ')[0],
+            time: adj.time,
+            title: '干预方案调整',
+            content: `${adj.operator}：${adj.note}`,
+            color: 'warning',
+            icon: Pill,
+            abnormal: true,
+            revisit: true,
+          });
+        });
+      }
     });
 
     tasks.forEach((t) => {
+      if (t.rescheduleHistory && t.rescheduleHistory.length > 0) {
+        t.rescheduleHistory.forEach((r, rIdx) => {
+          items.push({
+            id: `task-${t.id}-resched-${rIdx}`,
+            type: 'reschedule' as const,
+            date: r.time.split(' ')[0],
+            time: r.time,
+            title: `随访改期 - ${t.type === 'phone' ? '电话' : t.type === 'sms' ? '短信' : '门诊'}`,
+            content: `${r.operator}：从 ${r.fromDate} 改到 ${r.toDate}${r.reason ? `（${r.reason}）` : ''}`,
+            color: 'warning',
+            icon: CalendarClock,
+            abnormal: true,
+            revisit: false,
+          });
+        });
+      }
+      if (t.status === 'overdue') {
+        items.push({
+          id: `task-${t.id}-overdue`,
+          type: 'followup_overdue' as const,
+          date: t.scheduledDate,
+          time: `${t.scheduledDate} 23:59`,
+          title: `随访已逾期 - ${t.type === 'phone' ? '电话' : t.type === 'sms' ? '短信' : '门诊'}`,
+          content: `原计划 ${t.scheduledDate}，当前未完成`,
+          color: 'danger',
+          icon: AlertCircle,
+          abnormal: true,
+          revisit: true,
+        });
+      }
       if (t.status === 'completed') {
         items.push({
           id: `task-${t.id}`,
@@ -125,22 +185,31 @@ const Assessment: React.FC = () => {
           content: t.conclusion || '随访完成',
           color: 'success' as const,
           icon: PhoneCall,
+          abnormal: false,
+          revisit: t.type === 'visit' || (t.conclusion && (t.conclusion.includes('复诊') || t.conclusion.includes('加号'))),
         });
       }
     });
 
+    const contactByTask = new Map<string, number>();
     contactRecords.forEach((c) => {
+      const prevCount = contactByTask.get(c.followupTaskId) || 0;
+      contactByTask.set(c.followupTaskId, prevCount + 1);
+      const isReattempt = prevCount > 0;
+      const isFailed = c.result !== 'success';
       items.push({
         id: `contact-${c.id}`,
         type: 'contact' as const,
         date: c.contactTime.split(' ')[0],
         time: c.contactTime,
-        title: `触达记录 - ${c.type === 'phone' ? '电话' : c.type === 'sms' ? '短信' : '门诊'}`,
+        title: `${isReattempt ? '重新' : ''}触达记录 - ${c.type === 'phone' ? '电话' : c.type === 'sms' ? '短信' : '门诊'}`,
         result: c.result,
         operator: c.operator,
-        content: c.content || '无沟通内容',
-        color: c.result === 'success' ? 'success' : c.result === 'failed' ? 'danger' : 'warning',
+        content: (isReattempt ? `【第${prevCount + 1}次尝试】` : '') + (c.content || '无沟通内容'),
+        color: isFailed ? (c.result === 'failed' ? 'danger' : 'warning') : 'success',
         icon: c.type === 'phone' ? PhoneCall : c.type === 'sms' ? MessageSquare : User,
+        abnormal: isFailed || isReattempt,
+        revisit: isFailed,
       });
     });
 
@@ -148,9 +217,11 @@ const Assessment: React.FC = () => {
       .filter((i) => {
         if (timelineFilter === 'all') return true;
         if (timelineFilter === 'assessment') return i.type === 'assessment';
-        if (timelineFilter === 'followup') return i.type === 'followup';
-        if (timelineFilter === 'intervention') return i.type === 'intervention';
-        if (timelineFilter === 'contact') return i.type === 'contact';
+        if (timelineFilter === 'followup') return i.type === 'followup' || i.type === 'followup_overdue';
+        if (timelineFilter === 'intervention') return i.type === 'intervention' || i.type === 'intervention_adjust';
+        if (timelineFilter === 'contact') return i.type === 'contact' || i.type === 'reschedule';
+        if (timelineFilter === 'abnormal') return i.abnormal;
+        if (timelineFilter === 'revisit') return i.revisit;
         return true;
       })
       .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
@@ -293,12 +364,29 @@ const Assessment: React.FC = () => {
                       </div>
                       <div className="text-center">
                         <p className="text-sm text-neutral-500 mb-1">下次随访</p>
-                        <p className="text-xl font-semibold text-neutral-700">
-                          {getRelativeDate(getSuggestedFollowupDate(latestAssessment.assessmentDate, latestAssessment.totalScore))}
-                        </p>
-                        <p className="text-xs text-neutral-500 mt-1">
-                          {getSuggestedFollowupDate(latestAssessment.assessmentDate, latestAssessment.totalScore)}
-                        </p>
+                        {nextTask ? (
+                          <>
+                            <p className="text-xl font-semibold text-neutral-700">
+                              {getRelativeDate(nextTask.scheduledDate)}
+                            </p>
+                            <p className="text-xs text-neutral-500 mt-1 flex items-center justify-center gap-2">
+                              <span>{nextTask.scheduledDate}</span>
+                              <Badge variant={nextTask.status === 'overdue' ? 'danger' : nextTask.status === 'in_progress' ? 'primary' : 'neutral'} size="xs">
+                                {nextTask.status === 'pending' ? '待随访' : nextTask.status === 'in_progress' ? '进行中' : '已逾期'}
+                              </Badge>
+                              {nextTask.type === 'phone' ? '电话' : nextTask.type === 'sms' ? '短信' : '门诊'}
+                            </p>
+                          </>
+                        ) : latestAssessment ? (
+                          <>
+                            <p className="text-xl font-semibold text-neutral-700">
+                              {getRelativeDate(getSuggestedFollowupDate(latestAssessment.assessmentDate, latestAssessment.totalScore))}
+                            </p>
+                            <p className="text-xs text-neutral-500 mt-1">
+                              {getSuggestedFollowupDate(latestAssessment.assessmentDate, latestAssessment.totalScore)}（建议）
+                            </p>
+                          </>
+                        ) : null}
                       </div>
                       <Button 
                         leftIcon={<Plus size={18} />}
@@ -679,14 +767,18 @@ const Assessment: React.FC = () => {
                       { key: 'followup', label: '随访结论' },
                       { key: 'intervention', label: '干预方案' },
                       { key: 'contact', label: '触达记录' },
+                      { key: 'abnormal', label: '仅异常' },
+                      { key: 'revisit', label: '需复诊' },
                     ] as const).map((f) => (
                       <Badge
                         key={f.key}
-                        variant={timelineFilter === f.key ? 'primary' : 'neutral'}
+                        variant={timelineFilter === f.key ? (f.key === 'abnormal' ? 'danger' : f.key === 'revisit' ? 'warning' : 'primary') : 'neutral'}
                         size="sm"
                         className="cursor-pointer"
                         onClick={() => setTimelineFilter(f.key)}
                       >
+                        {f.key === 'abnormal' && <AlertTriangle size={12} className="mr-1 inline" />}
+                        {f.key === 'revisit' && <Stethoscope size={12} className="mr-1 inline" />}
                         {f.label}
                       </Badge>
                     ))}

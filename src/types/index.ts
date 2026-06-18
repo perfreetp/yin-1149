@@ -42,6 +42,9 @@ export interface FollowupTask {
   assignedTo: string;
   createdAt: string;
   completedAt: string;
+  rescheduleHistory?: { fromDate: string; toDate: string; operator: string; time: string; reason?: string }[];
+  _operator?: string;
+  _rescheduleReason?: string;
 }
 
 export interface Intervention {
@@ -55,6 +58,9 @@ export interface Intervention {
   endDate: string;
   notes: string;
   createdAt: string;
+  adjustmentHistory?: { time: string; operator: string; note: string }[];
+  _operator?: string;
+  _adjustmentNote?: string;
 }
 
 export interface ContactRecord {

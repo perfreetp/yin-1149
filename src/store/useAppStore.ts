@@ -37,6 +37,9 @@ interface AppState {
   updateFollowupTask: (id: string, updates: Partial<FollowupTask>) => void;
   addContactRecord: (record: Omit<ContactRecord, 'id'>) => void;
   addIntervention: (intervention: Omit<Intervention, 'id' | 'createdAt'>) => void;
+  updateIntervention: (id: string, updates: Partial<Intervention>) => void;
+  getNextFollowupTask: (patientId: string) => FollowupTask | undefined;
+  getTasksByOperator: (operator: string) => FollowupTask[];
   
   getHighRiskPatients: () => Patient[];
   getOverdueTasks: () => FollowupTask[];
@@ -160,9 +163,27 @@ export const useAppStore = create<AppState>()(
   
   updateFollowupTask: (id, updates) => {
     set((state) => ({
-      followupTasks: state.followupTasks.map((t) =>
-        t.id === id ? { ...t, ...updates } : t
-      ),
+      followupTasks: state.followupTasks.map((t) => {
+        if (t.id !== id) return t;
+        if (updates.scheduledDate && updates.scheduledDate !== t.scheduledDate) {
+          const historyEntry = {
+            fromDate: t.scheduledDate,
+            toDate: updates.scheduledDate,
+            operator: (updates as any)._operator || '系统',
+            time: formatDateTime(new Date()),
+            reason: (updates as any)._rescheduleReason,
+          };
+          const cleanedUpdates = { ...updates };
+          delete (cleanedUpdates as any)._operator;
+          delete (cleanedUpdates as any)._rescheduleReason;
+          return {
+            ...t,
+            ...cleanedUpdates,
+            rescheduleHistory: [...(t.rescheduleHistory || []), historyEntry],
+          };
+        }
+        return { ...t, ...updates };
+      }),
     }));
   },
   
@@ -187,6 +208,38 @@ export const useAppStore = create<AppState>()(
       interventions: [...state.interventions, newIntervention],
     }));
     return newIntervention;
+  },
+  
+  updateIntervention: (id, updates) => {
+    set((state) => ({
+      interventions: state.interventions.map((i) => {
+        if (i.id !== id) return i;
+        const operator = (updates as any)._operator || '医生';
+        const note = (updates as any)._adjustmentNote || '方案调整';
+        const cleanedUpdates = { ...updates };
+        delete (cleanedUpdates as any)._operator;
+        delete (cleanedUpdates as any)._adjustmentNote;
+        return {
+          ...i,
+          ...cleanedUpdates,
+          adjustmentHistory: [...(i.adjustmentHistory || []), {
+            time: formatDateTime(new Date()),
+            operator,
+            note,
+          }],
+        };
+      }),
+    }));
+  },
+  
+  getNextFollowupTask: (patientId) => {
+    return get().followupTasks
+      .filter((t) => t.patientId === patientId && t.status !== 'completed')
+      .sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime())[0];
+  },
+  
+  getTasksByOperator: (operator) => {
+    return get().followupTasks.filter((t) => t.assignedTo === operator);
   },
   
   getHighRiskPatients: () => {

@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: 'primary' | 'success' | 'warning' | 'danger' | 'neutral';
-  size?: 'sm' | 'md';
+  size?: 'xs' | 'sm' | 'md';
 }
 
 export const Badge: React.FC<BadgeProps> = ({
@@ -22,6 +22,7 @@ export const Badge: React.FC<BadgeProps> = ({
   };
   
   const sizes = {
+    xs: 'px-1.5 py-0.5 text-[10px]',
     sm: 'px-2 py-0.5 text-xs',
     md: 'px-2.5 py-1 text-sm',
   };

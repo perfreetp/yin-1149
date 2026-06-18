@@ -3,6 +3,7 @@ import { Layout } from '@/components/Layout';
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
 import { useAppStore } from '@/store/useAppStore';
 import { RISK_LEVELS, PSQI_COMPONENTS } from '@/types';
 import { getRiskLevel, getRiskLevelLabel } from '@/utils/psqi';
@@ -22,6 +23,9 @@ import {
   Download,
   CalendarDays,
   Filter,
+  UserRound,
+  XCircle,
+  Eye,
 } from 'lucide-react';
 import {
   LineChart,
@@ -60,6 +64,8 @@ const Reports: React.FC = () => {
 
   const [reportStartDate, setReportStartDate] = useState(formatDate(addDays(new Date(), -30)));
   const [reportEndDate, setReportEndDate] = useState(getToday());
+  const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+  const [showOperatorDetail, setShowOperatorDetail] = useState(false);
 
   const inDateRange = (dateStr: string) => {
     if (!dateStr) return false;
@@ -112,6 +118,61 @@ const Reports: React.FC = () => {
       completedFollowupsList: completedFollowups,
     };
   }, [patients, assessments, followupTasks, interventions, contactRecords, reportStartDate, reportEndDate, getPatientAssessments]);
+
+  const operatorStats = useMemo(() => {
+    const operatorMap = new Map<string, {
+      name: string;
+      pending: number;
+      completed: number;
+      overdue: number;
+      failedContacts: number;
+      totalContacts: number;
+      taskIds: string[];
+    }>();
+
+    const ensure = (name: string) => {
+      if (!operatorMap.has(name)) {
+        operatorMap.set(name, {
+          name: name || '未分配',
+          pending: 0,
+          completed: 0,
+          overdue: 0,
+          failedContacts: 0,
+          totalContacts: 0,
+          taskIds: [],
+        });
+      }
+      return operatorMap.get(name)!;
+    };
+
+    followupTasks.forEach((t) => {
+      const operator = t.assignedTo || '未分配';
+      const row = ensure(operator);
+      if (t.status === 'pending' || t.status === 'in_progress') row.pending++;
+      if (t.status === 'completed') row.completed++;
+      if (t.status === 'overdue') row.overdue++;
+      if (operator !== '未分配') row.taskIds.push(t.id);
+    });
+
+    contactRecords.forEach((c) => {
+      const row = ensure(c.operator || '未分配');
+      row.totalContacts++;
+      if (c.result === 'failed' || c.result === 'no_answer') row.failedContacts++;
+    });
+
+    return Array.from(operatorMap.values())
+      .filter(r => r.name !== '未分配' || r.pending + r.completed + r.overdue + r.totalContacts > 0)
+      .sort((a, b) => (b.completed + b.pending) - (a.completed + a.pending));
+  }, [followupTasks, contactRecords]);
+
+  const selectedOperatorData = useMemo(() => {
+    if (!selectedOperator) return null;
+    const tasks = followupTasks.filter(t => t.assignedTo === selectedOperator)
+      .sort((a, b) => new Date(b.scheduledDate).getTime() - new Date(a.scheduledDate).getTime());
+    const contacts = contactRecords.filter(c => c.operator === selectedOperator)
+      .sort((a, b) => new Date(b.contactTime).getTime() - new Date(a.contactTime).getTime());
+    return { tasks, contacts };
+  }, [selectedOperator, followupTasks, contactRecords]);
 
   const handleExportCSV = () => {
     const lines: string[] = [];
@@ -856,6 +917,95 @@ const Reports: React.FC = () => {
         <Card className="animate-fade-in-up">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
+              <UserRound size={18} className="text-primary-500" />
+              随访质控视图
+            </CardTitle>
+          </CardHeader>
+          <CardBody>
+            {operatorStats.length === 0 ? (
+              <div className="text-center py-12 text-neutral-500">
+                <UserRound size={40} className="mx-auto mb-2 text-neutral-300" />
+                <p>暂无随访专员数据</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-neutral-200">
+                      <th className="text-left py-3 px-4 font-medium text-neutral-600">随访专员</th>
+                      <th className="text-center py-3 px-4 font-medium text-neutral-600">待办</th>
+                      <th className="text-center py-3 px-4 font-medium text-neutral-600">已完成</th>
+                      <th className="text-center py-3 px-4 font-medium text-neutral-600">已逾期</th>
+                      <th className="text-center py-3 px-4 font-medium text-neutral-600">触达失败</th>
+                      <th className="text-center py-3 px-4 font-medium text-neutral-600">触达总数</th>
+                      <th className="text-center py-3 px-4 font-medium text-neutral-600">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {operatorStats.map((op, index) => {
+                      const failedRate = op.totalContacts > 0
+                        ? ((op.failedContacts / op.totalContacts) * 100).toFixed(1)
+                        : '0';
+                      return (
+                        <tr key={op.name} className="border-b border-neutral-100 hover:bg-neutral-50 transition-colors">
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-medium text-xs">
+                                {op.name.slice(0, 1)}
+                              </div>
+                              <span className="font-medium text-neutral-700">{op.name}</span>
+                            </div>
+                          </td>
+                          <td className="text-center py-3 px-4">
+                            <Badge variant="warning" size="sm">{op.pending}</Badge>
+                          </td>
+                          <td className="text-center py-3 px-4">
+                            <Badge variant="success" size="sm">{op.completed}</Badge>
+                          </td>
+                          <td className="text-center py-3 px-4">
+                            <Badge variant="danger" size="sm">{op.overdue}</Badge>
+                          </td>
+                          <td className="text-center py-3 px-4">
+                            <div className="flex items-center justify-center gap-1">
+                              <XCircle size={14} className="text-danger-500" />
+                              <span className={op.failedContacts > 0 ? 'text-danger-600 font-medium' : 'text-neutral-500'}>
+                                {op.failedContacts}
+                              </span>
+                              <span className="text-xs text-neutral-400">({failedRate}%)</span>
+                            </div>
+                          </td>
+                          <td className="text-center py-3 px-4 text-neutral-600">
+                            {op.totalContacts}
+                          </td>
+                          <td className="text-center py-3 px-4">
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              leftIcon={<Eye size={14} />}
+                              onClick={() => {
+                                setSelectedOperator(op.name);
+                                setShowOperatorDetail(true);
+                              }}
+                            >
+                              查看详情
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-xs text-neutral-500 mt-4">
+              提示：护士长可根据待办和逾期情况分配工作，触达失败率较高的专员建议进行沟通技巧培训。
+            </p>
+          </CardBody>
+        </Card>
+
+        <Card className="animate-fade-in-up">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
               <FileText size={18} className="text-primary-500" />
               数据摘要说明
             </CardTitle>
@@ -890,6 +1040,125 @@ const Reports: React.FC = () => {
           </CardBody>
         </Card>
       </div>
+
+      <Modal
+        isOpen={showOperatorDetail && !!selectedOperator}
+        onClose={() => {
+          setShowOperatorDetail(false);
+          setSelectedOperator(null);
+        }}
+        title={`随访专员详情 - ${selectedOperator || ''}`}
+        size="xl"
+        footer={
+          <Button variant="ghost" onClick={() => {
+            setShowOperatorDetail(false);
+            setSelectedOperator(null);
+          }}>关闭</Button>
+        }
+      >
+        {selectedOperatorData && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3 rounded-lg bg-warning-50 border border-warning-200 text-center">
+                <p className="text-xs text-warning-600">待办任务</p>
+                <p className="text-2xl font-bold font-mono text-warning-700 mt-1">
+                  {selectedOperatorData.tasks.filter(t => t.status === 'pending' || t.status === 'in_progress').length}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-success-50 border border-success-200 text-center">
+                <p className="text-xs text-success-600">已完成</p>
+                <p className="text-2xl font-bold font-mono text-success-700 mt-1">
+                  {selectedOperatorData.tasks.filter(t => t.status === 'completed').length}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-danger-50 border border-danger-200 text-center">
+                <p className="text-xs text-danger-600">已逾期</p>
+                <p className="text-2xl font-bold font-mono text-danger-700 mt-1">
+                  {selectedOperatorData.tasks.filter(t => t.status === 'overdue').length}
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-primary-50 border border-primary-200 text-center">
+                <p className="text-xs text-primary-600">触达总次数</p>
+                <p className="text-2xl font-bold font-mono text-primary-700 mt-1">
+                  {selectedOperatorData.contacts.length}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-neutral-700 mb-3 flex items-center gap-1.5">
+                <Clock size={16} className="text-primary-500" />
+                处理中的随访任务
+              </h4>
+              {selectedOperatorData.tasks.filter(t => t.status !== 'completed').length === 0 ? (
+                <div className="text-center py-6 text-neutral-500 text-sm bg-neutral-50 rounded-lg">
+                  暂无待处理任务
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {selectedOperatorData.tasks.filter(t => t.status !== 'completed').map((task) => {
+                    const patient = getPatientById(task.patientId);
+                    const latest = patient ? getLatestAssessment(patient.id) : null;
+                    return (
+                      <div key={task.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-neutral-200 hover:bg-neutral-50 transition-colors">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-neutral-700">{patient?.name || '未知患者'}</span>
+                            {latest && <Badge variant={latest.totalScore >= 15 ? 'danger' : latest.totalScore >= 8 ? 'warning' : 'success'} size="xs">
+                              PSQI {latest.totalScore}
+                            </Badge>}
+                            <Badge variant={task.status === 'overdue' ? 'danger' : task.status === 'in_progress' ? 'primary' : 'neutral'} size="xs">
+                              {task.status === 'pending' ? '待随访' : task.status === 'in_progress' ? '进行中' : '已逾期'}
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-neutral-500 mt-1 flex items-center gap-3 flex-wrap">
+                            <span>计划：{task.scheduledDate}</span>
+                            <span>{task.type === 'phone' ? '电话' : task.type === 'sms' ? '短信' : '门诊'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-neutral-700 mb-3 flex items-center gap-1.5">
+                <CheckCircle size={16} className="text-success-500" />
+                最近触达记录
+              </h4>
+              {selectedOperatorData.contacts.length === 0 ? (
+                <div className="text-center py-6 text-neutral-500 text-sm bg-neutral-50 rounded-lg">
+                  暂无触达记录
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {selectedOperatorData.contacts.slice(0, 20).map((c) => {
+                    const patient = getPatientById(c.patientId);
+                    return (
+                      <div key={c.id} className="p-3 rounded-lg border border-neutral-200 hover:bg-neutral-50 transition-colors">
+                        <div className="flex items-center justify-between gap-3 mb-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-neutral-700">{patient?.name || '未知患者'}</span>
+                            <Badge variant={c.result === 'success' ? 'success' : 'danger'} size="xs">
+                              {c.result === 'success' ? '联系成功' : c.result === 'no_answer' ? '无人接听' : '联系失败'}
+                            </Badge>
+                          </div>
+                          <span className="text-xs text-neutral-500">{c.contactTime}</span>
+                        </div>
+                        {c.content && (
+                          <p className="text-sm text-neutral-600 line-clamp-2">{c.content}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </Layout>
   );
 };

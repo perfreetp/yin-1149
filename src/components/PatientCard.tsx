@@ -18,13 +18,12 @@ interface PatientCardProps {
 export const PatientCard: React.FC<PatientCardProps> = ({ patient, index }) => {
   const navigate = useNavigate();
   const getLatestAssessment = useAppStore((state) => state.getLatestAssessment);
-  const getPatientTasks = useAppStore((state) => state.getPatientTasks);
   const getPatientAssessments = useAppStore((state) => state.getPatientAssessments);
+  const getNextFollowupTask = useAppStore((state) => state.getNextFollowupTask);
   
   const latestAssessment = getLatestAssessment(patient.id);
   const assessments = getPatientAssessments(patient.id);
-  const tasks = getPatientTasks(patient.id);
-  const nextTask = tasks.find((t) => t.status === 'pending' || t.status === 'in_progress');
+  const nextTask = getNextFollowupTask(patient.id);
   const hasNoAssessment = assessments.length === 0;
   
   const taskStatusConfig = nextTask ? TASK_STATUS[nextTask.status] : null;
