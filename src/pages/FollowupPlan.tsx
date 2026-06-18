@@ -46,7 +46,6 @@ const FollowupPlan: React.FC = () => {
   const [selectedPatientIds, setSelectedPatientIds] = useState<Set<string>>(new Set());
   const [patientFilterRisk, setPatientFilterRisk] = useState<'all' | 'moderate' | 'severe'>('all');
   const [batchRescheduleDate, setBatchRescheduleDate] = useState(getToday());
-  const [batchCreateType, setBatchCreateType] = useState<'phone' | 'sms'>('phone');
   const [batchCreateDate, setBatchCreateDate] = useState(getToday());
   
   const filteredTasks = getFilteredTasks();
@@ -125,16 +124,22 @@ const FollowupPlan: React.FC = () => {
       });
   }, [patients, patientFilterRisk]);
 
+  const eligiblePatients = useMemo(() => 
+    selectablePatients.filter((p: Patient) => !hasPendingTask(p.id)),
+    [selectablePatients]
+  );
+
   const hasPendingTask = (patientId: string) => {
     return followupTasks.some(t => 
       t.patientId === patientId && (t.status === 'pending' || t.status === 'in_progress')
     );
   };
 
-  const allPatientsSelected = selectablePatients.length > 0 && 
-    selectablePatients.every((p: Patient) => selectedPatientIds.has(p.id));
+  const allEligibleSelected = eligiblePatients.length > 0 && 
+    eligiblePatients.every((p: Patient) => selectedPatientIds.has(p.id));
 
   const togglePatientSelection = (patientId: string) => {
+    if (hasPendingTask(patientId)) return;
     setSelectedPatientIds(prev => {
       const next = new Set(prev);
       if (next.has(patientId)) {
@@ -147,12 +152,17 @@ const FollowupPlan: React.FC = () => {
   };
 
   const toggleSelectAllPatients = () => {
-    if (allPatientsSelected) {
+    if (allEligibleSelected) {
       setSelectedPatientIds(new Set());
     } else {
-      setSelectedPatientIds(new Set(selectablePatients.map((p: Patient) => p.id)));
+      setSelectedPatientIds(new Set(eligiblePatients.map((p: Patient) => p.id)));
     }
   };
+
+  const effectiveSelectedCount = useMemo(() => 
+    Array.from(selectedPatientIds).filter(id => !hasPendingTask(id)).length,
+    [selectedPatientIds, followupTasks]
+  );
 
   const handleBatchCreatePhoneFollowups = () => {
     let created = 0;
@@ -164,7 +174,7 @@ const FollowupPlan: React.FC = () => {
       const priority = p.riskLevel === 'severe' ? 'urgent' : 'high';
       addFollowupTask({
         patientId: p.id,
-        type: batchCreateType,
+        type: 'phone',
         scheduledDate: batchCreateDate,
         status: 'pending',
         priority,
@@ -178,7 +188,6 @@ const FollowupPlan: React.FC = () => {
     setShowBatchCreateModal(false);
     setSelectedPatientIds(new Set());
     setPatientFilterRisk('all');
-    setBatchCreateType('phone');
     setBatchCreateDate(getToday());
   };
   
@@ -595,7 +604,7 @@ const FollowupPlan: React.FC = () => {
           setSelectedPatientIds(new Set());
           setPatientFilterRisk('all');
         }}
-        title="批量安排随访"
+        title="批量安排电话随访"
         size="xl"
         footer={
           <>
@@ -606,9 +615,9 @@ const FollowupPlan: React.FC = () => {
             <Button 
               onClick={handleBatchCreatePhoneFollowups} 
               leftIcon={<Users size={18} />}
-              disabled={selectedPatientIds.size === 0}
+              disabled={effectiveSelectedCount === 0}
             >
-              为已选 {selectedPatientIds.size} 位患者生成随访任务
+              为 {effectiveSelectedCount} 位患者生成电话随访任务
             </Button>
           </>
         }
@@ -616,20 +625,19 @@ const FollowupPlan: React.FC = () => {
         <div className="space-y-5">
           <div className="p-4 bg-primary-50 border border-primary-200 rounded-lg">
             <p className="text-sm text-primary-700">
-              请勾选需要安排随访的患者，支持按风险分层快速筛选。仅会为当前没有待办/进行中任务的患者生成新任务。
+              勾选需要安排电话随访的患者，支持按风险分层快速筛选。
+              已有待办/进行中任务的患者已自动置灰，不参与全选和计数，也不会重复生成任务。
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Select
-              label="随访方式"
-              options={[
-                { value: 'phone', label: '电话随访' },
-                { value: 'sms', label: '短信提醒' },
-              ]}
-              value={batchCreateType}
-              onChange={(e) => setBatchCreateType(e.target.value as typeof batchCreateType)}
-            />
+            <div className="p-3 rounded-lg bg-neutral-50 border border-neutral-200">
+              <p className="text-sm font-medium text-neutral-700 mb-1">随访方式</p>
+              <div className="flex items-center gap-2">
+                <PhoneCall size={18} className="text-primary-500" />
+                <span className="text-sm text-neutral-700 font-medium">电话随访（固定）</span>
+              </div>
+            </div>
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-2">计划随访日期</label>
               <input
@@ -667,11 +675,12 @@ const FollowupPlan: React.FC = () => {
                 onClick={toggleSelectAllPatients}
                 className="flex items-center gap-2 text-sm text-neutral-700 hover:text-primary-600 transition-colors"
               >
-                {allPatientsSelected ? <CheckSquare size={18} className="text-primary-600" /> : <Square size={18} className="text-neutral-400" />}
-                <span className="font-medium">{allPatientsSelected ? '取消全选' : '全选'}</span>
+                {allEligibleSelected ? <CheckSquare size={18} className="text-primary-600" /> : <Square size={18} className="text-neutral-400" />}
+                <span className="font-medium">{allEligibleSelected ? '取消全选' : '全选可安排'}</span>
               </button>
               <span className="text-sm text-neutral-500">
-                已选 <span className="font-semibold text-primary-600">{selectedPatientIds.size}</span> / {selectablePatients.length}
+                已选 <span className="font-semibold text-primary-600">{effectiveSelectedCount}</span> / {eligiblePatients.length} 可安排
+                <span className="text-neutral-400 ml-1">（共 {selectablePatients.length} 位中 {selectablePatients.length - eligiblePatients.length} 位已有待办）</span>
               </span>
             </div>
           </div>
@@ -684,17 +693,17 @@ const FollowupPlan: React.FC = () => {
             ) : (
               selectablePatients.map((p: Patient) => {
                 const pending = hasPendingTask(p.id);
-                const selected = selectedPatientIds.has(p.id);
+                const selected = selectedPatientIds.has(p.id) && !pending;
                 const latest = getLatestAssessment(p.id);
                 return (
                   <div
                     key={p.id}
                     className={`flex items-start gap-3 px-4 py-3 border-b border-neutral-100 last:border-b-0 hover:bg-neutral-50 transition-colors ${
                       selected ? 'bg-primary-50/60' : ''
-                    } ${pending ? 'opacity-60' : ''}`}
+                    } ${pending ? 'opacity-60 bg-neutral-50' : ''}`}
                   >
                     <button
-                      onClick={() => !pending && togglePatientSelection(p.id)}
+                      onClick={() => togglePatientSelection(p.id)}
                       disabled={pending}
                       className="mt-0.5 flex-shrink-0 disabled:cursor-not-allowed"
                     >

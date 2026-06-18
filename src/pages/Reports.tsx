@@ -1096,7 +1096,10 @@ const Reports: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {selectedOperatorData.tasks.filter(t => t.status !== 'completed').map((task) => {
+                  {selectedOperatorData.tasks
+                    .filter(t => t.status !== 'completed')
+                    .sort((a, b) => new Date(a.scheduledDate).getTime() - new Date(b.scheduledDate).getTime())
+                    .map((task) => {
                     const patient = getPatientById(task.patientId);
                     const latest = patient ? getLatestAssessment(patient.id) : null;
                     return (
@@ -1115,6 +1118,56 @@ const Reports: React.FC = () => {
                             <span>计划：{task.scheduledDate}</span>
                             <span>{task.type === 'phone' ? '电话' : task.type === 'sms' ? '短信' : '门诊'}</span>
                           </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h4 className="text-sm font-semibold text-neutral-700 mb-3 flex items-center gap-1.5">
+                <CheckCircle size={16} className="text-success-500" />
+                已完成随访（带结论）
+              </h4>
+              {selectedOperatorData.tasks.filter(t => t.status === 'completed').length === 0 ? (
+                <div className="text-center py-6 text-neutral-500 text-sm bg-neutral-50 rounded-lg">
+                  暂无已完成随访
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {selectedOperatorData.tasks
+                    .filter(t => t.status === 'completed')
+                    .sort((a, b) => new Date(b.completedAt || b.scheduledDate).getTime() - new Date(a.completedAt || a.scheduledDate).getTime())
+                    .map((task) => {
+                    const patient = getPatientById(task.patientId);
+                    const latest = patient ? getLatestAssessment(patient.id) : null;
+                    return (
+                      <div key={task.id} className="p-3 rounded-lg border border-success-200 bg-success-50/40 hover:bg-success-50/70 transition-colors">
+                        <div className="flex items-center justify-between gap-3 mb-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-neutral-700">{patient?.name || '未知患者'}</span>
+                            {latest && <Badge variant={latest.totalScore >= 15 ? 'danger' : latest.totalScore >= 8 ? 'warning' : 'success'} size="xs">
+                              PSQI {latest.totalScore}
+                            </Badge>}
+                            <Badge variant={task.priority === 'urgent' ? 'danger' : task.priority === 'high' ? 'warning' : 'neutral'} size="xs">
+                              {task.priority === 'urgent' ? '紧急' : task.priority === 'high' ? '高' : task.priority === 'medium' ? '中' : '低'}
+                            </Badge>
+                          </div>
+                          <span className="text-xs text-neutral-500">
+                            完成：{task.completedAt || task.scheduledDate}
+                          </span>
+                        </div>
+                        <div className="text-xs text-neutral-500 flex items-center gap-3 flex-wrap mb-2">
+                          <span>原计划：{task.scheduledDate}</span>
+                          <span>{task.type === 'phone' ? '电话' : task.type === 'sms' ? '短信' : '门诊'}随访</span>
+                        </div>
+                        <div className="p-2.5 rounded-md bg-white border border-success-100">
+                          <p className="text-xs text-neutral-500 mb-0.5">随访结论：</p>
+                          <p className="text-sm text-neutral-700">
+                            {task.conclusion || <span className="text-neutral-400 italic">未填写结论</span>}
+                          </p>
                         </div>
                       </div>
                     );

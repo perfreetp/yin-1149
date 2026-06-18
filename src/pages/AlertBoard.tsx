@@ -24,6 +24,7 @@ const AlertBoard: React.FC = () => {
     getLatestAssessment,
     getPatientTasks,
     getPatientAssessments,
+    getNextFollowupTask,
     updatePatient,
     updateFollowupTask,
     addFollowupTask,
@@ -43,6 +44,7 @@ const AlertBoard: React.FC = () => {
     const latestAssessment = getLatestAssessment(patient.id);
     const tasks = getPatientTasks(patient.id);
     const overdueTask = tasks.find((t) => t.status === 'overdue' || t.status === 'pending');
+    const nextTask = getNextFollowupTask(patient.id);
     const daysSinceLastAssessment = latestAssessment 
       ? getDaysDiff(new Date(latestAssessment.assessmentDate), new Date())
       : 0;
@@ -51,6 +53,7 @@ const AlertBoard: React.FC = () => {
       patient,
       latestAssessment,
       overdueTask,
+      nextTask,
       daysSinceLastAssessment,
     };
   }).sort((a, b) => {
@@ -225,7 +228,7 @@ const AlertBoard: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 {highRiskWithData.map((item, index) => {
-                  const { patient, latestAssessment, daysSinceLastAssessment } = item;
+                  const { patient, latestAssessment, nextTask, daysSinceLastAssessment } = item;
                   const isVeryHighRisk = latestAssessment && latestAssessment.totalScore >= 18;
                   
                   return (
@@ -288,10 +291,26 @@ const AlertBoard: React.FC = () => {
                               <Calendar size={14} />
                               初诊：{patient.firstVisitDate}
                             </span>
-                            <span className="flex items-center gap-1.5">
-                              <TrendingUp size={14} />
-                              建议：{isVeryHighRisk ? '立即复诊' : '尽快随访'}
-                            </span>
+                            {nextTask ? (
+                              <span className="flex items-center gap-1.5">
+                                <Clock size={14} />
+                                下次随访：{nextTask.scheduledDate}（{getRelativeDate(nextTask.scheduledDate)}）
+                                <Badge 
+                                  size="xs" 
+                                  variant={nextTask.status === 'overdue' ? 'danger' : nextTask.status === 'in_progress' ? 'primary' : 'neutral'}
+                                >
+                                  {nextTask.status === 'pending' ? '待随访' : nextTask.status === 'in_progress' ? '进行中' : '已逾期'}
+                                </Badge>
+                                <Badge size="xs" variant="neutral">
+                                  {nextTask.type === 'phone' ? '电话' : nextTask.type === 'sms' ? '短信' : '门诊'}
+                                </Badge>
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1.5 text-warning-600">
+                                <AlertCircle size={14} />
+                                暂未安排随访，建议：{isVeryHighRisk ? '立即复诊' : '尽快随访'}
+                              </span>
+                            )}
                           </div>
                           
                           <div className="flex items-center gap-2">
